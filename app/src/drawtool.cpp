@@ -1,11 +1,10 @@
 #include "drawtool.h"
-#include "drawobj.h"
+#include "drawshapes.h"
 #include <QDebug>
 #include <QGraphicsSceneMouseEvent>
 #include <QGraphicsView>
 #include <QGraphicsLineItem>
 #include <QtMath>
-#include "drawobj.h"
 #define PI 3.1416
 
 QList<DrawTool*> DrawTool::c_tools;
@@ -19,6 +18,8 @@ static SelectTool selectTool;
 static RectTool   rectTool(rectangle);
 static RectTool   roundRectTool(roundrect);
 static RectTool   ellipseTool(ellipse);
+static RectTool   arcTool(arc);
+static RectTool   textTool(text);
 
 static PolygonTool lineTool(line);
 static PolygonTool polygonTool(polygon);
@@ -446,6 +447,12 @@ void RectTool::mousePressEvent(QGraphicsSceneMouseEvent *event, DrawScene *scene
         break;
     case ellipse:
         item = new GraphicsEllipseItem(QRect(1,1,1,1));
+        break;
+    case arc:
+        item = new GraphicsArcItem(QRect(1,1,1,1));
+        break;
+    case text:
+        item = new GraphicsTextItem(QRect(0,0,80,24));
         break;
     }
     if ( item == 0) return;

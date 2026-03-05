@@ -1,19 +1,16 @@
 #include "drawscene.h"
-#include<QGraphicsSceneMouseEvent>
-#include<QGraphicsRectItem>
+#include <QGraphicsSceneMouseEvent>
+#include <QGraphicsRectItem>
 #include <QDebug>
 #include <QKeyEvent>
-#include "drawobj.h"
-#include <vector>
 #include <QPainter>
-
+#include "graphicsitemgroup.h"
 
 GridTool::GridTool(const QSize & grid , const QSize & space )
     :m_sizeGrid(grid)
     ,m_sizeGridSpace(20,20)
 {
 }
-
 
 void GridTool::paintGrid(QPainter *painter, const QRect &rect)
 {
@@ -40,11 +37,6 @@ void GridTool::paintGrid(QPainter *painter, const QRect &rect)
     painter->drawLine(rect.right(),rect.top(),rect.right(),rect.bottom());
     painter->drawLine(rect.left(),rect.bottom(),rect.right(),rect.bottom());
 
-    //draw shadow
-//    QColor c1(Qt::black);
-//    painter->fillRect(QRect(rect.right()+1,rect.top()+2,2,rect.height()),c1.dark(200));
-//    painter->fillRect(QRect(rect.left()+2,rect.bottom()+2,rect.width(),2),c1.dark(200));
-
     painter->restore();
 }
 
@@ -54,11 +46,8 @@ public:
     BBoxSort( QGraphicsItem * item , const QRectF & rect , AlignType alignType )
         :item_(item),box(rect),align(alignType)
     {
-        //topLeft
         min_ = alignType == HORZEVEN_ALIGN ? box.topLeft().x() : box.topLeft().y();
-        //bottomRight
         max_ = alignType == HORZEVEN_ALIGN ? box.bottomRight().x() : box.bottomRight().y();
-        //width or height
         extent_ = alignType == HORZEVEN_ALIGN ? box.width() : box.height();
         anchor =  min_*0.5 + max_ * 0.5;
     }
@@ -95,8 +84,10 @@ DrawScene::~DrawScene()
     delete m_grid;
 }
 
-void DrawScene::align(AlignType alignType)
+void DrawScene::align(AlignType alignType, bool emitSignals)
 {
+    Q_UNUSED(emitSignals);
+
     AbstractShape * firstItem = qgraphicsitem_cast<AbstractShape*>(selectedItems().first());
     if ( !firstItem ) return;
     QRectF rectref = firstItem->mapRectToScene(firstItem->boundingRect());
@@ -115,44 +106,32 @@ void DrawScene::align(AlignType alignType)
                 continue;
             sorted.push_back(BBoxSort(item,item->mapRectToScene(item->boundingRect()),alignType));
         }
-        //sort bbox by anchors
         std::sort(sorted.begin(), sorted.end());
 
         unsigned int len = sorted.size();
-        bool changed = false;
-        //overall bboxes span
         float dist = (sorted.back().max()-sorted.front().min());
-        //space eaten by bboxes
         float span = 0;
         for (unsigned int i = 0; i < len; i++)
-        {
             span += sorted[i].extent();
-        }
-        //new distance between each bbox
         float step = (dist - span) / (len - 1);
         float pos = sorted.front().min();
         for ( std::vector<BBoxSort> ::iterator it (sorted.begin());
               it < sorted.end();
               ++it )
         {
-            {
-                QPointF t;
-                if ( alignType == HORZEVEN_ALIGN )
-                    t.setX( pos - it->min() );
-                else
-                    t.setY(pos - it->min());
-                it->item_->moveBy(t.x(),t.y());
-                 emit itemMoved(it->item_,t);
-                changed = true;
-            }
+            QPointF t;
+            if ( alignType == HORZEVEN_ALIGN )
+                t.setX( pos - it->min() );
+            else
+                t.setY(pos - it->min());
+            it->item_->moveBy(t.x(),t.y());
+            emit itemMoved(it->item_,t);
             pos += it->extent();
             pos += step;
         }
-
         return;
     }
 
-    int i = 0;
     foreach (QGraphicsItem *item , selectedItems()) {
         QGraphicsItemGroup *g = dynamic_cast<QGraphicsItemGroup*>(item->parentItem());
         if ( g )
@@ -227,7 +206,6 @@ void DrawScene::align(AlignType alignType)
             item->moveBy(ptMove.x(),ptMove.y());
             emit itemMoved(item,ptMove);
         }
-        i++;
     }
 }
 
@@ -243,21 +221,20 @@ void DrawScene::mouseEvent(QGraphicsSceneMouseEvent *mouseEvent)
     case QEvent::GraphicsSceneMouseRelease:
         QGraphicsScene::mouseReleaseEvent(mouseEvent);
         break;
+    default:
+        break;
     }
 }
 
 GraphicsItemGroup *DrawScene::createGroup(const QList<QGraphicsItem *> &items,bool isAdd)
 {
-    // Build a list of the first item's ancestors
     QList<QGraphicsItem *> ancestors;
     int n = 0;
-    QPointF pt = items.first()->pos();
     if (!items.isEmpty()) {
         QGraphicsItem *parent = items.at(n++);
         while ((parent = parent->parentItem()))
             ancestors.append(parent);
     }
-    // Find the common ancestor for all items
     QGraphicsItem *commonAncestor = 0;
     if (!ancestors.isEmpty()) {
         while (n < items.size()) {
@@ -280,7 +257,6 @@ GraphicsItemGroup *DrawScene::createGroup(const QList<QGraphicsItem *> &items,bo
         }
     }
 
-    // Create a new group at that level
     GraphicsItemGroup *group = new GraphicsItemGroup(commonAncestor);
     if (!commonAncestor && isAdd )
         addItem(group);
@@ -316,7 +292,6 @@ void DrawScene::drawBackground(QPainter *painter, const QRectF &rect)
 
 void DrawScene::mousePressEvent(QGraphicsSceneMouseEvent *mouseEvent)
 {
-
     DrawTool * tool = DrawTool::findTool( DrawTool::c_drawShape );
     if ( tool )
         tool->mousePressEvent(mouseEvent,this);
@@ -341,7 +316,6 @@ void DrawScene::mouseDoubleClickEvent(QGraphicsSceneMouseEvent *mouseEvet)
     DrawTool * tool = DrawTool::findTool( DrawTool::c_drawShape );
     if ( tool )
         tool->mouseDoubleClickEvent(mouseEvet,this);
-
 }
 
 void DrawScene::keyPressEvent(QKeyEvent *e)
@@ -370,6 +344,8 @@ void DrawScene::keyPressEvent(QKeyEvent *e)
         dy = 0;
         m_moved = true;
         break;
+    default:
+        break;
     }
     m_dx += dx;
     m_dy += dy;
@@ -383,7 +359,7 @@ void DrawScene::keyPressEvent(QKeyEvent *e)
 void DrawScene::keyReleaseEvent(QKeyEvent *e)
 {
     if (m_moved && selectedItems().count()>0)
-    emit itemMoved(NULL,QPointF(m_dx,m_dy));
+        emit itemMoved(NULL,QPointF(m_dx,m_dy));
     m_dx=m_dy=0;
     QGraphicsScene::keyReleaseEvent(e);
 }

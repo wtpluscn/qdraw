@@ -1,4 +1,5 @@
 #include "commands.h"
+#include "drawobj.h"
 #include <QDebug>
 MoveShapeCommand::MoveShapeCommand(QGraphicsScene *graphicsScene, const QPointF &delta, QUndoCommand *parent)
     : QUndoCommand(parent)
@@ -392,4 +393,103 @@ bool ControlShapeCommand::mergeWith(const QUndoCommand *command)
         .arg(newPos_.x()).arg(newPos_.y()).arg(handle_));
 
     return true;
+}
+
+// --- AlignCommand ---
+AlignCommand::AlignCommand(DrawScene *scene, AlignType alignType, QUndoCommand *parent)
+    : QUndoCommand(parent)
+    , m_scene(scene)
+    , m_alignType(alignType)
+{
+    foreach (QGraphicsItem *item, scene->selectedItems()) {
+        if (dynamic_cast<QGraphicsItemGroup*>(item->parentItem()))
+            continue;
+        m_items.append(item);
+        AlignCommand::ItemState s;
+        s.pos = item->pos();
+        s.zValue = item->zValue();
+        AbstractShape *ab = qgraphicsitem_cast<AbstractShape*>(item);
+        if (ab) {
+            s.width = ab->width();
+            s.height = ab->height();
+        } else {
+            s.width = s.height = 0;
+        }
+        m_oldStates.append(s);
+    }
+}
+
+void AlignCommand::undo()
+{
+    for (int i = 0; i < m_items.size() && i < m_oldStates.size(); ++i) {
+        QGraphicsItem *item = m_items.at(i);
+        const ItemState &s = m_oldStates.at(i);
+        item->setPos(s.pos);
+        item->setZValue(s.zValue);
+        AbstractShape *ab = qgraphicsitem_cast<AbstractShape*>(item);
+        if (ab && s.width > 0 && s.height > 0) {
+            ab->setWidth(s.width);
+            ab->setHeight(s.height);
+        }
+    }
+    if (m_scene)
+        m_scene->update();
+    setText(QObject::tr("Undo Align"));
+}
+
+void AlignCommand::redo()
+{
+    if (!m_scene || m_items.isEmpty()) return;
+    m_scene->clearSelection();
+    foreach (QGraphicsItem *item, m_items)
+        item->setSelected(true);
+    m_scene->align(m_alignType, false);
+    setText(QObject::tr("Redo Align"));
+}
+
+// --- ZOrderCommand ---
+ZOrderCommand::ZOrderCommand(QGraphicsScene *scene, Type type, QUndoCommand *parent)
+    : QUndoCommand(parent)
+    , m_scene(scene)
+    , m_type(type)
+    , m_item(0)
+    , m_oldZValue(0)
+    , m_newZValue(0)
+{
+    if (scene->selectedItems().isEmpty()) return;
+    m_item = scene->selectedItems().first();
+    m_oldZValue = m_item->zValue();
+    if (m_type == BringToFront) {
+        qreal z = 0;
+        foreach (QGraphicsItem *item, m_item->collidingItems()) {
+            if (item->zValue() >= z && item->type() == GraphicsItem::Type)
+                z = item->zValue() + 0.1;
+        }
+        m_newZValue = z;
+    } else {
+        qreal zMin = 1e10;
+        foreach (QGraphicsItem *item, m_item->collidingItems()) {
+            if (item->type() == GraphicsItem::Type && item->zValue() < zMin)
+                zMin = item->zValue();
+        }
+        m_newZValue = (zMin > 1e9) ? -0.1 : (zMin - 0.1);
+    }
+}
+
+void ZOrderCommand::undo()
+{
+    if (m_item)
+        m_item->setZValue(m_oldZValue);
+    if (m_scene)
+        m_scene->update();
+    setText(QObject::tr("Undo Z-Order"));
+}
+
+void ZOrderCommand::redo()
+{
+    if (m_item)
+        m_item->setZValue(m_newZValue);
+    if (m_scene)
+        m_scene->update();
+    setText(QObject::tr("Redo Z-Order"));
 }

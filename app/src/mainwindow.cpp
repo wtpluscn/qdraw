@@ -7,14 +7,13 @@
 #include <QMdiSubWindow>
 #include <QUndoStack>
 #include "customproperty.h"
-#include "drawobj.h"
+#include "drawshapes.h"
 #include "commands.h"
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    undoStack = new QUndoStack(this);
-    undoView = new QUndoView(undoStack);
+    undoView = new QUndoView(this);
     undoView->setWindowTitle(tr("Command List"));
     undoView->setAttribute(Qt::WA_QuitOnClose, false);
 
@@ -78,12 +77,37 @@ void MainWindow::createToolBox()
     dock->setWidget(toolBox);
     GraphicsRectItem item(QRect(0,0,48,48));
     QIcon icon(item.image());
+    GraphicsRectItem roundRectItem(QRect(0,0,48,48), true);
+    QIcon iconRoundRect(roundRectItem.image());
     GraphicsEllipseItem item1(QRect(0,0,48,48));
     QIcon icon1(item1.image());
 
     listView->addItem(new QListWidgetItem(icon,tr("Rectangle")));
-    listView->addItem(new QListWidgetItem(icon1,tr("RoundRect")));
+    listView->addItem(new QListWidgetItem(iconRoundRect,tr("RoundRect")));
+    listView->addItem(new QListWidgetItem(icon1,tr("Ellipse")));
 
+    connect(listView, SIGNAL(itemClicked(QListWidgetItem*)),
+            this, SLOT(onGraphicsLibraryItemClicked(QListWidgetItem*)));
+}
+
+void MainWindow::onGraphicsLibraryItemClicked(QListWidgetItem *item)
+{
+    if (!item || !activeMdiChild()) return;
+    int row = listView->row(item);
+    if (row == 0) {
+        DrawTool::c_drawShape = rectangle;
+        rectAct->setChecked(true);
+    } else if (row == 1) {
+        DrawTool::c_drawShape = roundrect;
+        roundRectAct->setChecked(true);
+    } else if (row == 2) {
+        DrawTool::c_drawShape = ellipse;
+        ellipseAct->setChecked(true);
+    } else
+        return;
+    if (activeMdiChild()->scene())
+        activeMdiChild()->scene()->clearSelection();
+    statusBar()->showMessage(tr("Drag on the canvas to draw"));
 }
 
 DrawView *MainWindow::activeMdiChild()
@@ -99,7 +123,7 @@ QMdiSubWindow *MainWindow::findMdiChild(const QString &fileName)
 
     foreach (QMdiSubWindow *window, mdiArea->subWindowList()) {
         DrawView *mdiChild = qobject_cast<DrawView *>(window->widget());
-        if (mdiChild->currentFile() == canonicalFilePath)
+        if (mdiChild && mdiChild->currentFile() == canonicalFilePath)
             return window;
     }
     return 0;
@@ -122,6 +146,10 @@ void MainWindow::createActions()
     saveAct->setShortcuts(QKeySequence::Save);
     saveAct->setStatusTip(tr("Save the document to disk"));
     connect(saveAct, SIGNAL(triggered()), this, SLOT(save()));
+
+    exportImageAct = new QAction(tr("Export as &image..."), this);
+    exportImageAct->setStatusTip(tr("Export current drawing as PNG image"));
+    connect(exportImageAct, SIGNAL(triggered()), this, SLOT(exportToImage()));
 
     exitAct = new QAction(tr("E&xit"), this);
     exitAct->setShortcuts(QKeySequence::Quit);
@@ -220,6 +248,10 @@ void MainWindow::createActions()
     roundRectAct->setCheckable(true);
     ellipseAct = new QAction(QIcon(":/icons/ellipse.png"),tr("ellipse tool"),this);
     ellipseAct->setCheckable(true);
+    arcAct = new QAction(QIcon(":/icons/arc.png"),tr("arc tool"),this);
+    arcAct->setCheckable(true);
+    textAct = new QAction(tr("Text"),this);
+    textAct->setCheckable(true);
     polygonAct = new QAction(QIcon(":/icons/polygon.png"),tr("polygon tool"),this);
     polygonAct->setCheckable(true);
     polylineAct = new QAction(QIcon(":/icons/polyline.png"),tr("polyline tool"),this);
@@ -236,6 +268,8 @@ void MainWindow::createActions()
     drawActionGroup->addAction(rectAct);
     drawActionGroup->addAction(roundRectAct);
     drawActionGroup->addAction(ellipseAct);
+    drawActionGroup->addAction(arcAct);
+    drawActionGroup->addAction(textAct);
     drawActionGroup->addAction(polygonAct);
     drawActionGroup->addAction(polylineAct);
     drawActionGroup->addAction(bezierAct);
@@ -248,6 +282,8 @@ void MainWindow::createActions()
     connect(rectAct,SIGNAL(triggered()),this,SLOT(addShape()));
     connect(roundRectAct,SIGNAL(triggered()),this,SLOT(addShape()));
     connect(ellipseAct,SIGNAL(triggered()),this,SLOT(addShape()));
+    connect(arcAct,SIGNAL(triggered()),this,SLOT(addShape()));
+    connect(textAct,SIGNAL(triggered()),this,SLOT(addShape()));
     connect(polygonAct,SIGNAL(triggered()),this,SLOT(addShape()));
     connect(polylineAct,SIGNAL(triggered()),this,SLOT(addShape()));
     connect(bezierAct,SIGNAL(triggered()),this,SLOT(addShape()));
@@ -256,13 +292,15 @@ void MainWindow::createActions()
     deleteAct = new QAction(tr("&Delete"), this);
     deleteAct->setShortcut(QKeySequence::Delete);
 
-    undoAct = undoStack->createUndoAction(this,tr("undo"));
+    undoAct = new QAction(tr("Undo"), this);
     undoAct->setIcon(QIcon(":/icons/undo.png"));
     undoAct->setShortcuts(QKeySequence::Undo);
+    connect(undoAct, SIGNAL(triggered()), this, SLOT(onUndo()));
 
-    redoAct = undoStack->createRedoAction(this,tr("redo"));
+    redoAct = new QAction(tr("Redo"), this);
     redoAct->setIcon(QIcon(":/icons/redo.png"));
     redoAct->setShortcuts(QKeySequence::Redo);
+    connect(redoAct, SIGNAL(triggered()), this, SLOT(onRedo()));
 
     zoomInAct = new QAction(QIcon(":/icons/zoomin.png"),tr("zoomIn"),this);
     zoomOutAct = new QAction(QIcon(":/icons/zoomout.png"),tr("zoomOut"),this);
@@ -295,6 +333,7 @@ void MainWindow::createMenus()
     fileMenu->addAction(newAct);
     fileMenu->addAction(openAct);
     fileMenu->addAction(saveAct);
+    fileMenu->addAction(exportImageAct);
     fileMenu->addSeparator();
     fileMenu->addAction(exitAct);
 
@@ -316,6 +355,7 @@ void MainWindow::createMenus()
     shapeTool->addAction(rectAct);
     shapeTool->addAction(roundRectAct);
     shapeTool->addAction(ellipseAct);
+    shapeTool->addAction(arcAct);
     shapeTool->addAction(polygonAct);
     shapeTool->addAction(polylineAct);
     shapeTool->addAction(bezierAct);
@@ -371,6 +411,8 @@ void MainWindow::createToolbars()
     drawToolBar->addAction(rectAct);
     drawToolBar->addAction(roundRectAct);
     drawToolBar->addAction(ellipseAct);
+    drawToolBar->addAction(arcAct);
+    drawToolBar->addAction(textAct);
     drawToolBar->addAction(polygonAct);
     drawToolBar->addAction(polylineAct);
     drawToolBar->addAction(bezierAct);
@@ -411,9 +453,8 @@ void MainWindow::updateMenus()
 {
     bool hasMdiChild = (activeMdiChild() != 0);
     saveAct->setEnabled(hasMdiChild);
-    if (!hasMdiChild){
-        undoStack->clear();
-    }
+    exportImageAct->setEnabled(hasMdiChild);
+    undoView->setStack(hasMdiChild ? activeMdiChild()->undoStack() : 0);
     closeAct->setEnabled(hasMdiChild);
     closeAllAct->setEnabled(hasMdiChild);
     tileAct->setEnabled(hasMdiChild);
@@ -447,6 +488,7 @@ void MainWindow::updateWindowMenu()
 
     for (int i = 0; i < windows.size(); ++i) {
         DrawView *child = qobject_cast<DrawView *>(windows.at(i)->widget());
+        if (!child) continue;
 
         QString text;
         if (i < 9) {
@@ -473,7 +515,9 @@ void MainWindow::newFile()
 
 void MainWindow::open()
 {
-    QString fileName = QFileDialog::getOpenFileName(this);
+    QString fileName = QFileDialog::getOpenFileName(this, tr("Open"),
+                                                    QString(),
+                                                    tr("XML files (*.xml);;All files (*)"));
     if (!fileName.isEmpty()) {
         QMdiSubWindow *existing = findMdiChild(fileName);
         if (existing) {
@@ -574,6 +618,10 @@ void MainWindow::addShape()
         DrawTool::c_drawShape = roundrect;
     else if ( sender() == ellipseAct )
         DrawTool::c_drawShape = ellipse ;
+    else if ( sender() == arcAct )
+        DrawTool::c_drawShape = arc ;
+    else if ( sender() == textAct )
+        DrawTool::c_drawShape = text ;
     else if ( sender() == polygonAct )
         DrawTool::c_drawShape = polygon;
     else if ( sender() == bezierAct )
@@ -584,7 +632,9 @@ void MainWindow::addShape()
         DrawTool::c_drawShape = polyline;
 
     if ( sender() != selectAct && sender() != rotateAct ){
-        activeMdiChild()->scene()->clearSelection();
+        DrawView *child = activeMdiChild();
+        if (child && child->scene())
+            child->scene()->clearSelection();
     }
 }
 
@@ -600,6 +650,8 @@ void MainWindow::updateActions()
     rectAct->setEnabled(scene);
     roundRectAct->setEnabled(scene);
     ellipseAct->setEnabled(scene);
+    arcAct->setEnabled(scene);
+    textAct->setEnabled(scene);
     bezierAct->setEnabled(scene);
     rotateAct->setEnabled(scene);
     polygonAct->setEnabled(scene);
@@ -613,12 +665,15 @@ void MainWindow::updateActions()
     rectAct->setChecked(DrawTool::c_drawShape == rectangle);
     roundRectAct->setChecked(DrawTool::c_drawShape == roundrect);
     ellipseAct->setChecked(DrawTool::c_drawShape == ellipse);
+    arcAct->setChecked(DrawTool::c_drawShape == arc);
+    textAct->setChecked(DrawTool::c_drawShape == text);
     bezierAct->setChecked(DrawTool::c_drawShape == bezier);
     rotateAct->setChecked(DrawTool::c_drawShape == rotation);
     polygonAct->setChecked(DrawTool::c_drawShape == polygon);
     polylineAct->setChecked(DrawTool::c_drawShape == polyline );
-    undoAct->setEnabled(undoStack->canUndo());
-    redoAct->setEnabled(undoStack->canRedo());
+    QUndoStack *stack = activeMdiChild() ? activeMdiChild()->undoStack() : 0;
+    undoAct->setEnabled(stack && stack->canUndo());
+    redoAct->setEnabled(stack && stack->canRedo());
 
 
     bringToFrontAct->setEnabled(scene && scene->selectedItems().count() > 0);
@@ -629,7 +684,6 @@ void MainWindow::updateActions()
 
     leftAct->setEnabled(scene && scene->selectedItems().count() > 1);
     rightAct->setEnabled(scene && scene->selectedItems().count() > 1);
-    leftAct->setEnabled(scene && scene->selectedItems().count() > 1);
     vCenterAct->setEnabled(scene && scene->selectedItems().count() > 1);
     hCenterAct->setEnabled(scene && scene->selectedItems().count() > 1);
     upAct->setEnabled(scene && scene->selectedItems().count() > 1);
@@ -641,28 +695,44 @@ void MainWindow::updateActions()
     horzAct->setEnabled(scene &&scene->selectedItems().count() > 2);
     vertAct->setEnabled(scene &&scene->selectedItems().count() > 2);
 
-    copyAct->setEnabled(scene &&scene->selectedItems().count() > 0);
-    cutAct->setEnabled(scene &&scene->selectedItems().count() > 0);
+    copyAct->setEnabled(scene && scene->selectedItems().count() > 0);
+    cutAct->setEnabled(scene && scene->selectedItems().count() > 0);
+    pasteAct->setEnabled(scene && (dynamic_cast<const ShapeMimeData*>(QApplication::clipboard()->mimeData()) != 0));
+}
+
+void MainWindow::onUndo()
+{
+    DrawView *v = activeMdiChild();
+    if (v && v->undoStack()->canUndo())
+        v->undoStack()->undo();
+}
+
+void MainWindow::onRedo()
+{
+    DrawView *v = activeMdiChild();
+    if (v && v->undoStack()->canRedo())
+        v->undoStack()->redo();
 }
 
 void MainWindow::itemSelected()
 {
     if (!activeMdiChild()) return ;
     QGraphicsScene * scene = activeMdiChild()->scene();
-
-    if ( scene->selectedItems().count() > 0
-         && scene->selectedItems().first()->isSelected())
-    {
-        QGraphicsItem *item = scene->selectedItems().first();
-
-        theControlledObject = dynamic_cast<QObject*>(item);
-        propertyEditor->setObject(theControlledObject);
-
-
+    int n = scene->selectedItems().count();
+    if (n == 0) {
+        theControlledObject = 0;
+        propertyEditor->setObject(0);
+        return;
     }
-    return ;
-    if ( theControlledObject )
-    {
+    if (n > 1) {
+        // Multiple selection: do not edit single object to avoid confusion
+        theControlledObject = 0;
+        propertyEditor->setObject(0);
+        return;
+    }
+    if (scene->selectedItems().first()->isSelected()) {
+        QGraphicsItem *item = scene->selectedItems().first();
+        theControlledObject = dynamic_cast<QObject*>(item);
         propertyEditor->setObject(theControlledObject);
     }
 }
@@ -673,12 +743,11 @@ void MainWindow::itemMoved(QGraphicsItem *item, const QPointF &oldPosition)
     if (!activeMdiChild()) return ;
         activeMdiChild()->setModified(true);
 
-    if ( item ){
-        QUndoCommand *moveCommand = new MoveShapeCommand(item, oldPosition);
-        undoStack->push(moveCommand);
-    }else{
-        QUndoCommand *moveCommand = new MoveShapeCommand(activeMdiChild()->scene(), oldPosition);
-        undoStack->push(moveCommand);
+    QUndoStack *stack = activeMdiChild()->undoStack();
+    if (item) {
+        stack->push(new MoveShapeCommand(item, oldPosition));
+    } else {
+        stack->push(new MoveShapeCommand(activeMdiChild()->scene(), oldPosition));
     }
 }
 
@@ -688,7 +757,7 @@ void MainWindow::itemAdded(QGraphicsItem *item)
         activeMdiChild()->setModified(true);
 
     QUndoCommand *addCommand = new AddShapeCommand(item, item->scene());
-    undoStack->push(addCommand);
+    activeMdiChild()->undoStack()->push(addCommand);
 }
 
 void MainWindow::itemRotate(QGraphicsItem *item, const qreal oldAngle)
@@ -696,8 +765,7 @@ void MainWindow::itemRotate(QGraphicsItem *item, const qreal oldAngle)
     if (!activeMdiChild()) return ;
         activeMdiChild()->setModified(true);
 
-    QUndoCommand *rotateCommand = new RotateShapeCommand(item , oldAngle);
-    undoStack->push(rotateCommand);
+    activeMdiChild()->undoStack()->push(new RotateShapeCommand(item , oldAngle));
 }
 
 void MainWindow::itemResize(QGraphicsItem *item, int handle, const QPointF& scale)
@@ -706,7 +774,7 @@ void MainWindow::itemResize(QGraphicsItem *item, int handle, const QPointF& scal
         activeMdiChild()->setModified(true);
 
     QUndoCommand *resizeCommand = new ResizeShapeCommand(item ,handle, scale );
-    undoStack->push(resizeCommand);
+    activeMdiChild()->undoStack()->push(resizeCommand);
 }
 
 void MainWindow::itemControl(QGraphicsItem *item, int handle, const QPointF & newPos ,const QPointF &lastPos_)
@@ -714,8 +782,7 @@ void MainWindow::itemControl(QGraphicsItem *item, int handle, const QPointF & ne
     if (!activeMdiChild()) return ;
         activeMdiChild()->setModified(true);
 
-    QUndoCommand *controlCommand = new ControlShapeCommand(item ,handle, newPos, lastPos_ );
-    undoStack->push(controlCommand);
+    activeMdiChild()->undoStack()->push(new ControlShapeCommand(item ,handle, newPos, lastPos_ ));
 }
 
 void MainWindow::deleteItem()
@@ -729,8 +796,7 @@ void MainWindow::deleteItem()
         return;
 
     QUndoCommand *deleteCommand = new RemoveShapeCommand(scene);
-    undoStack->push(deleteCommand);
-
+    activeMdiChild()->undoStack()->push(deleteCommand);
 }
 
 void MainWindow::on_actionBringToFront_triggered()
@@ -758,58 +824,53 @@ void MainWindow::on_actionSendToBack_triggered()
 {
     if (!activeMdiChild()) return ;
     QGraphicsScene * scene = activeMdiChild()->scene();
-
     if (scene->selectedItems().isEmpty())
         return;
-
-     activeMdiChild()->setModified(true);
-
-    QGraphicsItem *selectedItem = scene->selectedItems().first();
-    QList<QGraphicsItem *> overlapItems = selectedItem->collidingItems();
-
-    qreal zValue = 0;
-    foreach (QGraphicsItem *item, overlapItems) {
-        if (item->zValue() <= zValue && item->type() == GraphicsItem::Type)
-            zValue = item->zValue() - 0.1;
-    }
-    selectedItem->setZValue(zValue);
+    activeMdiChild()->setModified(true);
+    activeMdiChild()->undoStack()->push(new ZOrderCommand(scene, ZOrderCommand::SendToBack));
 }
 
 void MainWindow::on_aglin_triggered()
 {
     if (!activeMdiChild()) return ;
-    DrawScene * scene =dynamic_cast<DrawScene*>(activeMdiChild()->scene());
+    DrawScene * scene = dynamic_cast<DrawScene*>(activeMdiChild()->scene());
+    if (!scene || scene->selectedItems().isEmpty()) return ;
 
     activeMdiChild()->setModified(true);
 
-    if ( sender() == rightAct ){
-        scene->align(RIGHT_ALIGN);
-    }else if ( sender() == leftAct){
-        scene->align(LEFT_ALIGN);
-    }else if ( sender() == upAct ){
-        scene->align(UP_ALIGN);
-    }else if ( sender() == downAct ){
-        scene->align(DOWN_ALIGN);
-    }else if ( sender() == vCenterAct ){
-        scene->align(VERT_ALIGN);
-    }else if ( sender() == hCenterAct){
-        scene->align(HORZ_ALIGN);
-    }else if ( sender() == heightAct )
-        scene->align(HEIGHT_ALIGN);
-    else if ( sender()==widthAct )
-        scene->align(WIDTH_ALIGN);
-    else if ( sender() == horzAct )
-        scene->align(HORZEVEN_ALIGN);
-    else if ( sender() == vertAct )
-        scene->align(VERTEVEN_ALIGN);
-    else if ( sender () == allAct )
-        scene->align(ALL_ALIGN);
+    AlignType at = CENTER_ALIGN;
+    if ( sender() == rightAct ) at = RIGHT_ALIGN;
+    else if ( sender() == leftAct ) at = LEFT_ALIGN;
+    else if ( sender() == upAct ) at = UP_ALIGN;
+    else if ( sender() == downAct ) at = DOWN_ALIGN;
+    else if ( sender() == vCenterAct ) at = VERT_ALIGN;
+    else if ( sender() == hCenterAct ) at = HORZ_ALIGN;
+    else if ( sender() == heightAct ) at = HEIGHT_ALIGN;
+    else if ( sender() == widthAct ) at = WIDTH_ALIGN;
+    else if ( sender() == horzAct ) at = HORZEVEN_ALIGN;
+    else if ( sender() == vertAct ) at = VERTEVEN_ALIGN;
+    else if ( sender() == allAct ) at = ALL_ALIGN;
+    QUndoCommand *alignCmd = new AlignCommand(scene, at);
+    activeMdiChild()->undoStack()->push(alignCmd);
+}
+
+void MainWindow::exportToImage()
+{
+    if (!activeMdiChild()) return;
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Export as image"),
+                                                    QString(),
+                                                    tr("PNG images (*.png);;All files (*)"));
+    if (fileName.isEmpty()) return;
+    if (activeMdiChild()->exportToPng(fileName))
+        statusBar()->showMessage(tr("Exported to %1").arg(fileName), 2000);
+    else
+        statusBar()->showMessage(tr("Export failed"), 2000);
 }
 
 void MainWindow::zoomIn()
-{    
+{
     if (!activeMdiChild()) return ;
-     activeMdiChild()->zoomIn();
+    activeMdiChild()->zoomIn();
 }
 
 void MainWindow::zoomOut()
@@ -829,19 +890,20 @@ void MainWindow::on_group_triggered()
     if ( selectedItems.count() < 1) return;
     GraphicsItemGroup *group = scene->createGroup(selectedItems);
     QUndoCommand *groupCommand = new GroupShapeCommand(group,scene);
-    undoStack->push(groupCommand);
+    activeMdiChild()->undoStack()->push(groupCommand);
 }
 
 void MainWindow::on_unGroup_triggered()
 {
     if (!activeMdiChild()) return ;
     QGraphicsScene * scene = activeMdiChild()->scene();
+    if (scene->selectedItems().isEmpty()) return ;
 
     QGraphicsItem *selectedItem = scene->selectedItems().first();
     GraphicsItemGroup * group = dynamic_cast<GraphicsItemGroup*>(selectedItem);
     if ( group ){
         QUndoCommand *unGroupCommand = new UnGroupShapeCommand(group,scene);
-        undoStack->push(unGroupCommand);
+        activeMdiChild()->undoStack()->push(unGroupCommand);
     }
 }
 
@@ -897,7 +959,7 @@ void MainWindow::on_paste()
                 copy->setSelected(true);
                 copy->moveBy(10,10);
                 QUndoCommand *addCommand = new AddShapeCommand(copy, scene);
-                undoStack->push(addCommand);
+                activeMdiChild()->undoStack()->push(addCommand);
             }
         }
     }
@@ -916,7 +978,7 @@ void MainWindow::on_cut()
             copylist.append(copy);
     }
     QUndoCommand *deleteCommand = new RemoveShapeCommand(scene);
-    undoStack->push(deleteCommand);
+    activeMdiChild()->undoStack()->push(deleteCommand);
     if ( copylist.count() > 0 ){
         ShapeMimeData * data = new ShapeMimeData( copylist );
         QApplication::clipboard()->setMimeData(data);
@@ -925,14 +987,13 @@ void MainWindow::on_cut()
 
 void MainWindow::dataChanged()
 {
-    pasteAct->setEnabled(true);
+    const QMimeData *md = QApplication::clipboard()->mimeData();
+    pasteAct->setEnabled(md && (dynamic_cast<const ShapeMimeData*>(md) != 0));
 }
 
 void MainWindow::positionChanged(int x, int y)
 {
-   char buf[255];
-   sprintf(buf,"%d,%d",x,y);
-   statusBar()->showMessage(buf);
+   statusBar()->showMessage(QString("%1,%2").arg(x).arg(y));
 }
 
 void MainWindow::setActiveSubWindow(QWidget *window)

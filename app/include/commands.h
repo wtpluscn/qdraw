@@ -134,6 +134,35 @@ private:
     QPointF initialPosition;
 };
 
+class AlignCommand : public QUndoCommand
+{
+public:
+    AlignCommand(DrawScene *scene, AlignType alignType, QUndoCommand *parent = 0);
+    void undo() Q_DECL_OVERRIDE;
+    void redo() Q_DECL_OVERRIDE;
+private:
+    struct ItemState { QPointF pos; qreal width; qreal height; qreal zValue; };
+    DrawScene *m_scene;
+    AlignType m_alignType;
+    QList<QGraphicsItem *> m_items;
+    QList<ItemState> m_oldStates;
+};
+
+class ZOrderCommand : public QUndoCommand
+{
+public:
+    enum Type { BringToFront, SendToBack };
+    ZOrderCommand(QGraphicsScene *scene, Type type, QUndoCommand *parent = 0);
+    void undo() Q_DECL_OVERRIDE;
+    void redo() Q_DECL_OVERRIDE;
+private:
+    QGraphicsScene *m_scene;
+    Type m_type;
+    QGraphicsItem *m_item;
+    qreal m_oldZValue;
+    qreal m_newZValue;
+};
+
 QString createCommandString(QGraphicsItem *item, const QPointF &point);
 
 #endif // COMMANDS

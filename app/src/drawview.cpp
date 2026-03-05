@@ -1,13 +1,21 @@
 #include "drawview.h"
 #include "drawscene.h"
+#include "drawshapes.h"
+
 #include <QSvgGenerator>
 #include <QXmlStreamWriter>
 #include <QXmlStreamReader>
+#include <QFile>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QImage>
+#include <QPainter>
+#include <QUndoStack>
 
-//http://www.w3.org/TR/SVG/Overview.html
+// http://www.w3.org/TR/SVG/Overview.html
 
 DrawView::DrawView(QGraphicsScene *scene)
-    :QGraphicsView(scene)
+    : QGraphicsView(scene)
 {
     m_hruler = new QtRuleBar(Qt::Horizontal,this,this);
     m_vruler = new QtRuleBar(Qt::Vertical,this,this);
@@ -16,8 +24,9 @@ DrawView::DrawView(QGraphicsScene *scene)
 
     setAttribute(Qt::WA_DeleteOnClose);
     isUntitled = true;
-
     modified = false;
+
+    m_undoStack = new QUndoStack(this);
 }
 
 void DrawView::zoomIn()
@@ -54,17 +63,16 @@ bool DrawView::loadFile(const QString &fileName)
 
     QXmlStreamReader xml(&file);
     if (xml.readNextStartElement()) {
-        if ( xml.name() == tr("canvas"))
+        if ( xml.name() == QLatin1String("canvas"))
         {
-            int width = xml.attributes().value(tr("width")).toInt();
-            int height = xml.attributes().value(tr("height")).toInt();
+            int width = xml.attributes().value(QLatin1String("width")).toInt();
+            int height = xml.attributes().value(QLatin1String("height")).toInt();
             scene()->setSceneRect(0,0,width,height);
             loadCanvas(&xml);
         }
     }
 
     setCurrentFile(fileName);
-    qDebug()<<xml.errorString();
     return !xml.error();
 }
 
@@ -85,12 +93,10 @@ bool DrawView::saveAs()
         return false;
 
     return saveFile(fileName);
-
 }
 
 bool DrawView::saveFile(const QString &fileName)
 {
-
     QFile file(fileName);
     if (!file.open(QFile::WriteOnly | QFile::Text)) {
         QMessageBox::warning(this, tr("Qt Drawing"),
@@ -111,33 +117,32 @@ bool DrawView::saveFile(const QString &fileName)
     foreach (QGraphicsItem *item , scene()->items()) {
         AbstractShape * ab = qgraphicsitem_cast<AbstractShape*>(item);
         QGraphicsItemGroup *g = dynamic_cast<QGraphicsItemGroup*>(item->parentItem());
-        if ( ab &&!qgraphicsitem_cast<SizeHandleRect*>(ab) && !g ){
+        if ( ab && !qgraphicsitem_cast<SizeHandleRect*>(ab) && !g ){
             ab->saveToXml(&xml);
         }
     }
     xml.writeEndElement();
     xml.writeEndDocument();
-#if 0
-    QSvgGenerator generator;
-    generator.setFileName(fileName);
-    generator.setSize(QSize(800, 600));
-    generator.setTitle(tr("SVG Generator Example Drawing"));
-    generator.setDescription(tr("An SVG drawing created by the SVG Generator "
-                                "Example provided with Qt."));
-//![configure SVG generator]
-//![begin painting]
-    QPainter painter;
-    painter.begin(&generator);
-//![begin painting]
-//!
-    scene()->clearSelection();
-    scene()->render(&painter);
-//![end painting]
-    painter.end();
-//![end painting]
-#endif
+
     setCurrentFile(fileName);
     return true;
+}
+
+bool DrawView::exportToPng(const QString &fileName)
+{
+    QRectF rect = scene()->sceneRect();
+    if (!rect.isValid())
+        return false;
+
+    QImage image(rect.size().toSize(), QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    scene()->render(&painter, QRectF(QPointF(0,0), rect.size()), rect);
+    painter.end();
+
+    return image.save(fileName, "PNG");
 }
 
 QString DrawView::userFriendlyCurrentFile()
@@ -156,7 +161,7 @@ void DrawView::closeEvent(QCloseEvent *event)
 
 void DrawView::mouseMoveEvent(QMouseEvent *event)
 {
-    QPointF pt =mapToScene(event->pos());
+    QPointF pt = mapToScene(event->pos());
     m_hruler->updatePosition(event->pos());
     m_vruler->updatePosition(event->pos());
     emit positionChanged( pt.x() , pt.y() );
@@ -186,7 +191,9 @@ void DrawView::scrollContentsBy(int dx, int dy)
 
 void DrawView::updateRuler()
 {
-    if ( scene() == 0) return;
+    if (!scene())
+        return;
+
     QRectF viewbox = this->rect();
     QPointF offset = mapFromScene(scene()->sceneRect().topLeft());
     double factor =  1./transform().m11();
@@ -200,8 +207,6 @@ void DrawView::updateRuler()
 
     m_vruler->setRange(lower_y,upper_y,upper_y - lower_y );
     m_vruler->update();
-
-    //qDebug()<<viewbox<<QPoint(lower_x,upper_x) << QPoint(lower_y,upper_y) << offset;
 }
 
 bool DrawView::maybeSave()
@@ -234,70 +239,76 @@ void DrawView::setCurrentFile(const QString &fileName)
 QString DrawView::strippedName(const QString &fullFileName)
 {
     return QFileInfo(fullFileName).fileName();
-
 }
 
-void DrawView::loadCanvas( QXmlStreamReader *xml)
+AbstractShape *DrawView::createItemFromXmlName(QXmlStreamReader *xml)
 {
-    Q_ASSERT(xml->isStartElement() && xml->name() == "canvas");
+    const QString name = xml->name().toString();
+    if (name == QLatin1String("rect"))
+        return new GraphicsRectItem(QRect(0,0,1,1));
+    if (name == QLatin1String("roundrect"))
+        return new GraphicsRectItem(QRect(0,0,1,1), true);
+    if (name == QLatin1String("ellipse"))
+        return new GraphicsEllipseItem(QRect(0,0,1,1));
+    if (name == QLatin1String("arc"))
+        return new GraphicsArcItem(QRect(0,0,1,1));
+    if (name == QLatin1String("text"))
+        return new GraphicsTextItem(QRect(0,0,80,24));
+    if (name == QLatin1String("polygon"))
+        return new GraphicsPolygonItem();
+    if (name == QLatin1String("bezier"))
+        return new GraphicsBezier();
+    if (name == QLatin1String("polyline"))
+        return new GraphicsBezier(false);
+    if (name == QLatin1String("line"))
+        return new GraphicsLineItem();
+    if (name == QLatin1String("group"))
+        return qgraphicsitem_cast<AbstractShape*>(loadGroupFromXML(xml));
+    return 0;
+}
+
+void DrawView::loadCanvas(QXmlStreamReader *xml)
+{
+    Q_ASSERT(xml->isStartElement() && xml->name() == QLatin1String("canvas"));
 
     while (xml->readNextStartElement()) {
-        AbstractShape * item = NULL;
-        if (xml->name() == tr("rect")){
-            item = new GraphicsRectItem(QRect(0,0,1,1));
-        }else if (xml->name() == tr("roundrect")){
-            item = new GraphicsRectItem(QRect(0,0,1,1),true);
-        }else if (xml->name() == tr("ellipse"))
-            item = new GraphicsEllipseItem(QRect(0,0,1,1));
-        else if (xml->name()==tr("polygon"))
-            item = new GraphicsPolygonItem();
-        else if ( xml->name()==tr("bezier"))
-            item = new GraphicsBezier();
-        else if ( xml->name() == tr("polyline"))
-            item = new GraphicsBezier(false);
-        else if ( xml->name() == tr("line"))
-            item = new GraphicsLineItem();
-        else if ( xml->name() == tr("group"))
-            item =qgraphicsitem_cast<AbstractShape*>(loadGroupFromXML(xml));
-        else
+        AbstractShape * item = createItemFromXmlName(xml);
+        if (item) {
+            if (!qgraphicsitem_cast<GraphicsItemGroup*>(item)) {
+                if (item->loadFromXml(xml))
+                    scene()->addItem(item);
+                else
+                    delete item;
+            } else {
+                scene()->addItem(item);
+            }
+        } else {
             xml->skipCurrentElement();
-
-        if (item && item->loadFromXml(xml))
-            scene()->addItem(item);
-        else if ( item )
-            delete item;
+        }
     }
 }
 
 GraphicsItemGroup *DrawView::loadGroupFromXML(QXmlStreamReader *xml)
 {
     QList<QGraphicsItem*> items;
-    qreal angle = xml->attributes().value(tr("rotate")).toDouble();
+    qreal angle = xml->attributes().value(QLatin1String("rotate")).toDouble();
     while (xml->readNextStartElement()) {
-        AbstractShape * item = NULL;
-        if (xml->name() == tr("rect")){
-            item = new GraphicsRectItem(QRect(0,0,1,1));
-        }else if (xml->name() == tr("roundrect")){
-            item = new GraphicsRectItem(QRect(0,0,1,1),true);
-        }else if (xml->name() == tr("ellipse"))
-            item = new GraphicsEllipseItem(QRect(0,0,1,1));
-        else if (xml->name()==tr("polygon"))
-            item = new GraphicsPolygonItem();
-        else if ( xml->name()==tr("bezier"))
-            item = new GraphicsBezier();
-        else if ( xml->name() == tr("polyline"))
-            item = new GraphicsBezier(false);
-        else if ( xml->name() == tr("line"))
-            item = new GraphicsLineItem();
-        else if ( xml->name() == tr("group"))
-            item =qgraphicsitem_cast<AbstractShape*>(loadGroupFromXML(xml));
-        else
+        AbstractShape * item = createItemFromXmlName(xml);
+        if (item) {
+            if (!qgraphicsitem_cast<GraphicsItemGroup*>(item)) {
+                if (item->loadFromXml(xml)) {
+                    scene()->addItem(item);
+                    items.append(item);
+                } else {
+                    delete item;
+                }
+            } else {
+                scene()->addItem(item);
+                items.append(item);
+            }
+        } else {
             xml->skipCurrentElement();
-        if (item && item->loadFromXml(xml)){
-            scene()->addItem(item);
-            items.append(item);
-        }else if ( item )
-            delete item;
+        }
     }
 
     if ( items.count() > 0 ){
@@ -306,7 +317,6 @@ GraphicsItemGroup *DrawView::loadGroupFromXML(QXmlStreamReader *xml)
         if (group){
             group->setRotation(angle);
             group->updateCoordinate();
-            //qDebug()<<"angle:" <<angle;
         }
         return group;
     }

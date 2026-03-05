@@ -12,6 +12,11 @@
 #include <vector>
 #include <QMimeData>
 #include <QXmlStreamReader>
+#include <QXmlStreamWriter>
+#include <QRandomGenerator>
+
+class QPainter;
+class QStyleOptionGraphicsItem;
 
 class ShapeMimeData : public QMimeData
 {
@@ -32,7 +37,9 @@ public:
         :BaseType(parent)
     {
         m_pen=QPen(Qt::NoPen);
-        m_brush= QBrush(QColor(rand() % 32 * 8, rand() % 32 * 8, rand() % 32 * 8));
+        m_brush= QBrush(QColor(QRandomGenerator::global()->bounded(256),
+                              QRandomGenerator::global()->bounded(256),
+                              QRandomGenerator::global()->bounded(256)));
         m_width = m_height = 0;
     }
     virtual ~AbstractShapeType(){}
@@ -43,7 +50,7 @@ public:
     virtual void updateCoordinate () {}
     virtual void move( const QPointF & point ){Q_UNUSED(point);}
     virtual QGraphicsItem * duplicate() const { return NULL;}
-    virtual int handleCount() const { return m_handles.size();}
+    virtual int handleCount() const { return static_cast<int>(m_handles.size());}
     virtual bool loadFromXml(QXmlStreamReader * xml ) = 0;
     virtual bool saveToXml( QXmlStreamWriter * xml ) = 0 ;
     int collidesWithHandle( const QPointF & point ) const
@@ -224,150 +231,7 @@ protected:
 
 };
 
-class GraphicsRectItem : public GraphicsItem
-{
-public:
-    GraphicsRectItem(const QRect & rect , bool isRound = false ,QGraphicsItem * parent = 0 );
-    QRectF boundingRect() const;
-    QPainterPath shape() const;
-    void control(int dir, const QPointF & delta);
-    void stretch(int handle , double sx , double sy , const QPointF & origin);
-    QRectF  rect() const {  return m_localRect;}
-    void updateCoordinate();
-    void move( const QPointF & point );
-    QGraphicsItem *duplicate () const ;
-    QString displayName() const { return tr("rectangle"); }
-
-    virtual bool loadFromXml(QXmlStreamReader * xml );
-    virtual bool saveToXml( QXmlStreamWriter * xml );
-
-protected:
-    void updatehandles();
-    void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget);
-    bool m_isRound;
-    qreal m_fRatioY;
-    qreal m_fRatioX;
-    QRectF m_initialRect;
-    QPointF opposite_;
-    QPointF m_originPoint;
-};
-
-class GraphicsEllipseItem :public GraphicsRectItem
-{
-public:
-    GraphicsEllipseItem(const QRect & rect , QGraphicsItem * parent = 0);
-    QPainterPath shape() const;
-    void control(int dir, const QPointF & delta );
-    QRectF boundingRect() const ;
-    QGraphicsItem *duplicate() const;
-    QString displayName() const { return tr("ellipse"); }
-    virtual bool loadFromXml(QXmlStreamReader * xml );
-    virtual bool saveToXml( QXmlStreamWriter * xml );
-protected:
-    void updatehandles();
-    void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget);
-    int   m_startAngle;
-    int   m_spanAngle;
-};
-
-class GraphicsItemGroup : public QObject,
-        public AbstractShapeType <QGraphicsItemGroup>
-{
-    Q_OBJECT
-    Q_PROPERTY(QColor pen READ penColor WRITE setPen )
-    Q_PROPERTY(QColor brush READ brushColor WRITE setBrushColor )
-    Q_PROPERTY(qreal  width READ width WRITE setWidth )
-    Q_PROPERTY(qreal  height READ height WRITE setHeight )
-    Q_PROPERTY(QPointF  position READ pos WRITE setPos )
-
-public:
-    enum {Type = UserType+2};
-    int  type() const { return Type; }
-    explicit GraphicsItemGroup(QGraphicsItem *parent = 0);
-    QRectF boundingRect() const;
-    ~GraphicsItemGroup();
-
-    QString displayName() const { return tr("group"); }
-
-    virtual bool loadFromXml(QXmlStreamReader * xml );
-    virtual bool saveToXml( QXmlStreamWriter * xml );
-
-    QGraphicsItem *duplicate () const ;
-    void control(int dir, const QPointF & delta);
-    void stretch( int handle , double sx , double sy , const QPointF & origin );
-    void updateCoordinate();
-signals:
-    void selectedChange(QGraphicsItem *item);
-
-protected:
-    GraphicsItemGroup * createGroup(const QList<QGraphicsItem *> &items) const;
-    QList<QGraphicsItem *> duplicateItems() const;
-    void updatehandles();
-    QVariant itemChange(QGraphicsItem::GraphicsItemChange change, const QVariant &value);
-    void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget = 0);
-    QGraphicsItem * m_parent;
-    QRectF itemsBoundingRect;
-    QRectF m_initialRect;
-};
-
-class GraphicsPolygonItem : public GraphicsItem
-{
-public:
-    GraphicsPolygonItem(QGraphicsItem * parent = 0);
-    QRectF boundingRect() const ;
-    QPainterPath shape() const;
-    virtual void addPoint( const QPointF & point ) ;
-    virtual void endPoint(const QPointF & point );
-    void control(int dir, const QPointF & delta);
-    void stretch( int handle , double sx , double sy , const QPointF & origin );
-    void updateCoordinate ();
-    virtual bool loadFromXml(QXmlStreamReader * xml );
-    virtual bool saveToXml( QXmlStreamWriter * xml );
-    QString displayName() const { return tr("polygon"); }
-    QGraphicsItem *duplicate() const;
-protected:
-    void updatehandles();
-    void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget);
-    QPolygonF m_points;
-    QPolygonF m_initialPoints;
-};
-
-class GraphicsLineItem : public GraphicsPolygonItem
-{
-public:
-    GraphicsLineItem(QGraphicsItem * parent = 0);
-    QPainterPath shape() const;
-    QGraphicsItem *duplicate() const;
-    void addPoint( const QPointF & point ) ;
-    void endPoint(const QPointF & point );
-    virtual QPointF opposite( int handle ) ;
-    void updateCoordinate() { m_initialPoints = m_points;}
-    int handleCount() const { return m_handles.size() + Left;}
-    void stretch( int handle , double sx , double sy , const QPointF & origin );
-    virtual bool loadFromXml(QXmlStreamReader * xml );
-    virtual bool saveToXml( QXmlStreamWriter * xml );
-    QString displayName() const { return tr("line"); }
-protected:
-    void updatehandles();
-    void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget);
-
-};
-
-class GraphicsBezier : public GraphicsPolygonItem
-{
-public:
-    GraphicsBezier(bool bbezier = true , QGraphicsItem * parent = 0);
-    QPainterPath shape() const;
-    QGraphicsItem *duplicate() const;
-    virtual bool loadFromXml(QXmlStreamReader * xml );
-    virtual bool saveToXml( QXmlStreamWriter * xml );
-    QString displayName() const { return tr("bezier"); }
-protected:
-    void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget);
-private:
-    bool m_isBezier;
-};
-
-
+QPainterPath qt_graphicsItem_shapeFromPath(const QPainterPath &path, const QPen &pen);
+void qt_graphicsItem_highlightSelected(QGraphicsItem *item, QPainter *painter, const QStyleOptionGraphicsItem *option);
 
 #endif // DRAWOBJ

@@ -25,6 +25,7 @@ class QToolButton;
 class QAbstractButton;
 class QGraphicsView;
 class QListWidget;
+class QListWidgetItem;
 class QStatusBar;
 class QMdiArea;
 class QMdiSubWindow;
@@ -69,6 +70,7 @@ public slots:
     void on_actionBringToFront_triggered();
     void on_actionSendToBack_triggered();
     void on_aglin_triggered();
+    void exportToImage();
     void zoomIn();
     void zoomOut();
     void on_group_triggered();
@@ -79,6 +81,9 @@ public slots:
     void on_cut();
     void dataChanged();
     void positionChanged(int x, int y );
+    void onUndo();
+    void onRedo();
+    void onGraphicsLibraryItemClicked(QListWidgetItem *item);
 
     void about();
 protected:
@@ -127,6 +132,7 @@ private:
     QAction *newAct;
     QAction *openAct;
     QAction *saveAct;
+    QAction *exportImageAct;
     QAction *exitAct;
 
     QAction  * groupAct;
@@ -150,6 +156,8 @@ private:
     QAction  * rectAct;
     QAction  * roundRectAct;
     QAction  * ellipseAct;
+    QAction  * arcAct;
+    QAction  * textAct;
     QAction  * polygonAct;
     QAction  * polylineAct;
     QAction  * bezierAct;
@@ -172,7 +180,6 @@ private:
 
     QListWidget    *listView;
 
-    QUndoStack *undoStack;
     QUndoView *undoView;
     // statusbar label
     QLabel *m_posInfo;

@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/">
+        <file>app_zh_CN.qm</file>
         <file>icons/align_bottom.png</file>
         <file>icons/align_hcenter.png</file>
         <file>icons/align_left.png</file>

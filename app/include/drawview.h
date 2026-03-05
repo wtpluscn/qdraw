@@ -4,22 +4,26 @@
 
 #include "rulebar.h"
 #include "drawobj.h"
+#include "graphicsitemgroup.h"
 
 class QMouseEvent;
+class QUndoStack;
 
 class DrawView : public QGraphicsView
 {
     Q_OBJECT
 public:
     DrawView(QGraphicsScene *scene);
+    QUndoStack *undoStack() const { return m_undoStack; }
     void zoomIn();
     void zoomOut();
 
     void newFile();
     bool loadFile(const QString &fileName);
     bool save();
-     bool saveAs();
+    bool saveAs();
     bool saveFile(const QString &fileName);
+    bool exportToPng(const QString &fileName);
     QString userFriendlyCurrentFile();
 
     QString currentFile() { return curFile; }
@@ -44,10 +48,12 @@ private:
     QString strippedName(const QString &fullFileName);
     void loadCanvas( QXmlStreamReader *xml );
     GraphicsItemGroup * loadGroupFromXML( QXmlStreamReader * xml );
+    AbstractShape * createItemFromXmlName( QXmlStreamReader * xml );
 
     QString curFile;
     bool isUntitled;
     bool modified;
+    class QUndoStack *m_undoStack;
 };
 
 #endif // DRAWVIEW_H

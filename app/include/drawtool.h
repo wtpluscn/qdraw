@@ -4,6 +4,7 @@
 
 #include "drawobj.h"
 #include "drawscene.h"
+#include "graphicsitemgroup.h"
 
 QT_BEGIN_NAMESPACE
 class QGraphicsScene;
@@ -28,6 +29,8 @@ enum DrawShape
     rectangle ,
     roundrect ,
     ellipse ,
+    arc ,
+    text ,
     bezier,
     polygon,
     polyline,
