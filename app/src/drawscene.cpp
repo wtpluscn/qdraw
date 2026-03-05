@@ -292,6 +292,19 @@ void DrawScene::drawBackground(QPainter *painter, const QRectF &rect)
 
 void DrawScene::mousePressEvent(QGraphicsSceneMouseEvent *mouseEvent)
 {
+    qDebug() << "[scene] mousePress at" << mouseEvent->scenePos()
+             << "pendingElementPath is"
+             << (m_pendingElementPath.isEmpty() ? "EMPTY" : m_pendingElementPath);
+
+    if (!m_pendingElementPath.isEmpty()) {
+        QString path = m_pendingElementPath;
+        m_pendingElementPath.clear();
+        qDebug() << "[scene] emitting sceneClickedForElement for" << path
+                 << "at" << mouseEvent->scenePos();
+        emit sceneClickedForElement(path, mouseEvent->scenePos());
+        return;
+    }
+
     DrawTool * tool = DrawTool::findTool( DrawTool::c_drawShape );
     if ( tool )
         tool->mousePressEvent(mouseEvent,this);

@@ -84,6 +84,12 @@ public slots:
     void onUndo();
     void onRedo();
     void onGraphicsLibraryItemClicked(QListWidgetItem *item);
+    void onCompoundListContextMenu(const QPoint &pos);
+    void onElementNew();
+    void onElementEdit();
+    void onElementDelete();
+    void onSceneClickedForElement(const QString &path, const QPointF &scenePos);
+    void saveSelectionAsElementTriggered();
 
     void about();
 protected:
@@ -95,6 +101,8 @@ private:
     void createToolbars();
     void createPropertyEditor();
     void createToolBox();
+    QString elementLibraryPath() const;
+    void loadElementLibrary();
 
     DrawView *activeMdiChild();
     QMdiSubWindow *findMdiChild(const QString &fileName);
@@ -162,6 +170,7 @@ private:
     QAction  * polylineAct;
     QAction  * bezierAct;
     QAction  * rotateAct;
+    QAction  * saveAsElementAct;
 
     QAction *closeAct;
     QAction *closeAllAct;
@@ -179,6 +188,8 @@ private:
     QObject *theControlledObject;
 
     QListWidget    *listView;
+    QListWidget    *listViewElements;
+    QString        m_editingElementPath;
 
     QUndoView *undoView;
     // statusbar label

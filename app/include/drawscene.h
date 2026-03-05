@@ -57,7 +57,9 @@ public:
     void mouseEvent(QGraphicsSceneMouseEvent *mouseEvent );
     GraphicsItemGroup * createGroup(const QList<QGraphicsItem *> &items ,bool isAdd = true);
     void destroyGroup(QGraphicsItemGroup *group);
+    void setPendingElementPath(const QString &path) { m_pendingElementPath = path; }
 signals:
+    void sceneClickedForElement(const QString &path, const QPointF &scenePos);
     void itemMoved( QGraphicsItem * item , const QPointF & oldPosition );
     void itemRotate(QGraphicsItem * item , const qreal oldAngle );
     void itemAdded(QGraphicsItem * item );
@@ -78,6 +80,7 @@ protected:
     qreal m_dy;
     bool  m_moved;
     GridTool *m_grid;
+    QString m_pendingElementPath;
 };
 
 #endif // DRAWSCENE

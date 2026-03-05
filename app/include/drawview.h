@@ -26,6 +26,10 @@ public:
     bool exportToPng(const QString &fileName);
     QString userFriendlyCurrentFile();
 
+    bool loadElementAndInsertAt(const QString &elementPath, const QPointF &scenePos);
+    bool saveSelectionAsElement(const QString &elementPath, const QString &displayName);
+    QPixmap renderElementPreview(const QString &elementPath, const QSize &size);
+
     QString currentFile() { return curFile; }
     void setModified( bool value ) { modified = value ; }
     bool isModified() const { return modified; }
@@ -49,6 +53,7 @@ private:
     void loadCanvas( QXmlStreamReader *xml );
     GraphicsItemGroup * loadGroupFromXML( QXmlStreamReader * xml );
     AbstractShape * createItemFromXmlName( QXmlStreamReader * xml );
+    bool loadElementIntoScene(QXmlStreamReader *xml, QGraphicsScene *targetScene, QList<QGraphicsItem *> *outList);
 
     QString curFile;
     bool isUntitled;

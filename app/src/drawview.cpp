@@ -11,6 +11,7 @@
 #include <QImage>
 #include <QPainter>
 #include <QUndoStack>
+#include <QFileInfo>
 
 // http://www.w3.org/TR/SVG/Overview.html
 
@@ -321,5 +322,158 @@ GraphicsItemGroup *DrawView::loadGroupFromXML(QXmlStreamReader *xml)
         return group;
     }
     return 0;
+}
+
+bool DrawView::loadElementIntoScene(QXmlStreamReader *xml, QGraphicsScene *targetScene, QList<QGraphicsItem *> *outList)
+{
+    if (!targetScene || !outList || xml->name() != QLatin1String("element"))
+        return false;
+    qDebug() << "[element] loadElementIntoScene start, targetScene rect:"
+             << targetScene->sceneRect();
+    outList->clear();
+    while (xml->readNextStartElement()) {
+        AbstractShape *item = createItemFromXmlName(xml);
+        if (item) {
+            if (!qgraphicsitem_cast<GraphicsItemGroup*>(item)) {
+                if (item->loadFromXml(xml)) {
+                    targetScene->addItem(item);
+                    outList->append(item);
+                } else {
+                    delete item;
+                }
+            } else {
+                targetScene->addItem(item);
+                outList->append(item);
+            }
+        } else {
+            xml->skipCurrentElement();
+        }
+    }
+    qDebug() << "[element] loadElementIntoScene created" << outList->size() << "items";
+    return !outList->isEmpty();
+}
+
+bool DrawView::loadElementAndInsertAt(const QString &elementPath, const QPointF &scenePos)
+{
+    QFile file(elementPath);
+    if (!file.open(QFile::ReadOnly | QFile::Text)) {
+        qDebug() << "[element] failed to open" << elementPath;
+        return false;
+    }
+    QXmlStreamReader xml(&file);
+    if (!xml.readNextStartElement() || xml.name() != QLatin1String("element")) {
+        qDebug() << "[element] root is not <element> for" << elementPath << "got" << xml.name();
+        return false;
+    }
+    QList<QGraphicsItem*> items;
+    if (!loadElementIntoScene(&xml, scene(), &items)) {
+        qDebug() << "[element] loadElementIntoScene returned false for" << elementPath;
+        return false;
+    }
+    DrawScene *ds = dynamic_cast<DrawScene*>(scene());
+    if (!ds || items.isEmpty()) {
+        qDebug() << "[element] no DrawScene or no items for" << elementPath;
+        return false;
+    }
+    // For placed elements we want a visible group in the scene,
+    // so we let DrawScene add the group item.
+    GraphicsItemGroup *group = ds->createGroup(items, true);
+    if (!group) {
+        qDebug() << "[element] createGroup failed for" << elementPath;
+        return false;
+    }
+    group->updateCoordinate();
+    QPointF topLeft = group->sceneBoundingRect().topLeft();
+    group->setPos(group->pos() + scenePos - topLeft);
+    // 选中并将视图居中到新插入的组合图元，确保用户能看到
+    group->setSelected(true);
+    this->centerOn(group);
+    qDebug() << "[element] placed group at" << group->pos()
+             << "sceneBoundingRect" << group->sceneBoundingRect();
+    setModified(true);
+    return true;
+}
+
+static void collectShapesWithScenePos(QGraphicsItem *item, QList<QPair<AbstractShape*, QPointF> > *out)
+{
+    if (qgraphicsitem_cast<SizeHandleRect*>(item))
+        return;
+    GraphicsItemGroup *grp = qgraphicsitem_cast<GraphicsItemGroup*>(item);
+    if (grp) {
+        foreach (QGraphicsItem *child, grp->childItems()) {
+            if (!qgraphicsitem_cast<SizeHandleRect*>(child))
+                collectShapesWithScenePos(child, out);
+        }
+        return;
+    }
+    AbstractShape *ab = qgraphicsitem_cast<AbstractShape*>(item);
+    if (ab)
+        out->append(qMakePair(ab, item->scenePos()));
+}
+
+bool DrawView::saveSelectionAsElement(const QString &elementPath, const QString &displayName)
+{
+    QList<QGraphicsItem*> sel = scene()->selectedItems();
+    if (sel.isEmpty())
+        return false;
+    QList<QPair<AbstractShape*, QPointF> > shapes;
+    foreach (QGraphicsItem *item, sel)
+        collectShapesWithScenePos(item, &shapes);
+    if (shapes.isEmpty())
+        return false;
+    QRectF unionRect;
+    for (int i = 0; i < shapes.size(); ++i)
+        unionRect |= shapes.at(i).first->sceneBoundingRect();
+    QPointF origin = unionRect.topLeft();
+
+    QFile file(elementPath);
+    if (!file.open(QFile::WriteOnly | QFile::Text))
+        return false;
+    QXmlStreamWriter xml(&file);
+    xml.setAutoFormatting(true);
+    xml.writeStartDocument();
+    xml.writeStartElement(QLatin1String("element"));
+    xml.writeAttribute(QLatin1String("name"), displayName.isEmpty() ? QFileInfo(elementPath).baseName() : displayName);
+    for (int i = 0; i < shapes.size(); ++i) {
+        AbstractShape *ab = shapes.at(i).first;
+        QPointF relPos = shapes.at(i).second - origin;
+        QGraphicsItem *dup = ab->duplicate();
+        AbstractShape *dupShape = qgraphicsitem_cast<AbstractShape*>(dup);
+        if (!dupShape) {
+            delete dup;
+            continue;
+        }
+        dupShape->setPos(relPos);
+        dupShape->saveToXml(&xml);
+        delete dup;
+    }
+    xml.writeEndElement();
+    xml.writeEndDocument();
+    return true;
+}
+
+QPixmap DrawView::renderElementPreview(const QString &elementPath, const QSize &size)
+{
+    QFile file(elementPath);
+    if (!file.open(QFile::ReadOnly | QFile::Text))
+        return QPixmap();
+    QXmlStreamReader xml(&file);
+    if (!xml.readNextStartElement() || xml.name() != QLatin1String("element"))
+        return QPixmap();
+    QGraphicsScene tempScene;
+    QList<QGraphicsItem*> items;
+    if (!loadElementIntoScene(&xml, &tempScene, &items) || items.isEmpty())
+        return QPixmap();
+    QRectF bounds = tempScene.itemsBoundingRect();
+    if (!bounds.isValid())
+        bounds = QRectF(0, 0, 48, 48);
+    tempScene.setSceneRect(bounds.adjusted(-4, -4, 4, 4));
+    QImage img(size.isEmpty() ? QSize(48, 48) : size, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::transparent);
+    QPainter p(&img);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    tempScene.render(&p, QRectF(), tempScene.sceneRect());
+    p.end();
+    return QPixmap::fromImage(img);
 }
 

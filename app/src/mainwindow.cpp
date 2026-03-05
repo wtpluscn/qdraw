@@ -1,5 +1,9 @@
 #include "mainwindow.h"
+#include "drawview.h"
+#include "drawscene.h"
 #include <QtWidgets>
+#include <QDir>
+#include <QInputDialog>
 #include "qtvariantproperty.h"
 #include "qttreepropertybrowser.h"
 #include <QDockWidget>
@@ -67,47 +71,129 @@ void MainWindow::createToolBox()
     QDockWidget *dock = new QDockWidget(this);
     addDockWidget(Qt::LeftDockWidgetArea, dock);
 
+    toolBox = new QToolBox(dock);
+    toolBox->setSizePolicy(QSizePolicy(QSizePolicy::Maximum, QSizePolicy::Ignored));
+
     listView = new QListWidget();
     listView->setViewMode(QListView::IconMode);
     listView->setDragDropMode(QAbstractItemView::NoDragDrop);
-    listView->setStyleSheet(tr("QListView {background-color: mediumaquamarine;}"));
-    toolBox = new QToolBox(dock);
-    toolBox->setSizePolicy(QSizePolicy(QSizePolicy::Maximum, QSizePolicy::Ignored));
-    toolBox->addItem(listView,tr("Graphics Library"));
-    dock->setWidget(toolBox);
+    listView->setStyleSheet(tr("QListView {background-color: #e0f0e0;}"));
     GraphicsRectItem item(QRect(0,0,48,48));
     QIcon icon(item.image());
     GraphicsRectItem roundRectItem(QRect(0,0,48,48), true);
     QIcon iconRoundRect(roundRectItem.image());
     GraphicsEllipseItem item1(QRect(0,0,48,48));
     QIcon icon1(item1.image());
+    listView->addItem(new QListWidgetItem(icon, tr("Rectangle")));
+    listView->addItem(new QListWidgetItem(iconRoundRect, tr("RoundRect")));
+    listView->addItem(new QListWidgetItem(icon1, tr("Ellipse")));
+    toolBox->addItem(listView, tr("Basic shapes"));
 
-    listView->addItem(new QListWidgetItem(icon,tr("Rectangle")));
-    listView->addItem(new QListWidgetItem(iconRoundRect,tr("RoundRect")));
-    listView->addItem(new QListWidgetItem(icon1,tr("Ellipse")));
+    listViewElements = new QListWidget();
+    listViewElements->setViewMode(QListView::IconMode);
+    listViewElements->setDragDropMode(QAbstractItemView::NoDragDrop);
+    listViewElements->setStyleSheet(tr("QListView {background-color: #e0e8f0;}"));
+    listViewElements->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(listViewElements, &QListWidget::customContextMenuRequested,
+            this, &MainWindow::onCompoundListContextMenu);
+    toolBox->addItem(listViewElements, tr("Compound elements"));
 
     connect(listView, SIGNAL(itemClicked(QListWidgetItem*)),
             this, SLOT(onGraphicsLibraryItemClicked(QListWidgetItem*)));
+    connect(listViewElements, SIGNAL(itemClicked(QListWidgetItem*)),
+            this, SLOT(onGraphicsLibraryItemClicked(QListWidgetItem*)));
+
+    dock->setWidget(toolBox);
+}
+
+QString MainWindow::elementLibraryPath() const
+{
+    return QCoreApplication::applicationDirPath() + QLatin1String("/element");
+}
+
+void MainWindow::loadElementLibrary()
+{
+    listViewElements->clear();
+    QDir elementDir(elementLibraryPath());
+    if (!elementDir.exists())
+        return;
+    QStringList filters;
+    filters << QLatin1String("*.xml");
+    const QSize iconSize(48, 48);
+    DrawView *view = activeMdiChild();
+    foreach (const QString &name, elementDir.entryList(filters, QDir::Files, QDir::Name)) {
+        QString path = elementDir.absoluteFilePath(name);
+        QPixmap icon;
+        if (view) {
+            qDebug() << "[element] preview via active view for" << path;
+            icon = view->renderElementPreview(path, iconSize);
+        } else {
+            // no active view yet, use a temporary one just for preview
+            qDebug() << "[element] preview via temp view for" << path;
+            QGraphicsScene dummyScene;
+            DrawView tempView(&dummyScene);
+            icon = tempView.renderElementPreview(path, iconSize);
+        }
+        if (icon.isNull())
+            icon = QPixmap(iconSize);
+        QListWidgetItem *wi = new QListWidgetItem(icon, QFileInfo(name).baseName());
+        wi->setData(Qt::UserRole, path);
+        listViewElements->addItem(wi);
+    }
 }
 
 void MainWindow::onGraphicsLibraryItemClicked(QListWidgetItem *item)
 {
-    if (!item || !activeMdiChild()) return;
-    int row = listView->row(item);
-    if (row == 0) {
-        DrawTool::c_drawShape = rectangle;
-        rectAct->setChecked(true);
-    } else if (row == 1) {
-        DrawTool::c_drawShape = roundrect;
-        roundRectAct->setChecked(true);
-    } else if (row == 2) {
-        DrawTool::c_drawShape = ellipse;
-        ellipseAct->setChecked(true);
-    } else
+    if (!item) return;
+    QListWidget *from = qobject_cast<QListWidget*>(sender());
+    if (from == listView) {
+        int row = listView->row(item);
+        if (row == 0) {
+            DrawTool::c_drawShape = rectangle;
+            rectAct->setChecked(true);
+        } else if (row == 1) {
+            DrawTool::c_drawShape = roundrect;
+            roundRectAct->setChecked(true);
+        } else if (row == 2) {
+            DrawTool::c_drawShape = ellipse;
+            ellipseAct->setChecked(true);
+        }
+        m_editingElementPath.clear();
+        if (activeMdiChild()->scene())
+            activeMdiChild()->scene()->clearSelection();
+        statusBar()->showMessage(tr("Drag on the canvas to draw"));
         return;
-    if (activeMdiChild()->scene())
-        activeMdiChild()->scene()->clearSelection();
-    statusBar()->showMessage(tr("Drag on the canvas to draw"));
+    }
+    if (from == listViewElements) {
+        QString path = item->data(Qt::UserRole).toString();
+        if (!path.isEmpty()) {
+            qDebug() << "[element] clicked" << path;
+            DrawView *view = activeMdiChild();
+            if (!view) {
+                qDebug() << "[element] no active view, creating new drawing window for pending placement";
+                view = createMdiChild();
+            }
+            DrawScene *sc = view ? qobject_cast<DrawScene*>(view->scene()) : 0;
+            if (sc) {
+                sc->setPendingElementPath(path);
+                DrawTool::c_drawShape = selection;
+                selectAct->setChecked(true);
+                // 让当前视图获得焦点，并用十字光标提示“待放置”
+                foreach (QMdiSubWindow *w, mdiArea->subWindowList()) {
+                    if (w->widget() == view) {
+                        mdiArea->setActiveSubWindow(w);
+                        break;
+                    }
+                }
+                view->setFocus(Qt::MouseFocusReason);
+                view->setCursor(Qt::CrossCursor);
+                statusBar()->showMessage(tr("[Element] Click on the canvas to place the element"));
+            } else {
+                qDebug() << "[element] no scene for pending placement";
+                statusBar()->showMessage(tr("No drawing window to place element into"));
+            }
+        }
+    }
 }
 
 DrawView *MainWindow::activeMdiChild()
@@ -234,6 +320,9 @@ void MainWindow::createActions()
     connect(groupAct,SIGNAL(triggered()),this,SLOT(on_group_triggered()));
     connect(unGroupAct,SIGNAL(triggered()),this,SLOT(on_unGroup_triggered()));
 
+    saveAsElementAct = new QAction(tr("Save as element..."), this);
+    saveAsElementAct->setStatusTip(tr("Save selected items as a compound element to the library"));
+    connect(saveAsElementAct, SIGNAL(triggered()), this, SLOT(saveSelectionAsElementTriggered()));
 
     //create draw actions
     selectAct = new QAction(QIcon(":/icons/arrow.png"),tr("select tool"),this);
@@ -344,6 +433,7 @@ void MainWindow::createMenus()
     editMenu->addAction(copyAct);
     editMenu->addAction(pasteAct);
     editMenu->addAction(deleteAct);
+    editMenu->addAction(saveAsElementAct);
 
     QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(zoomInAct);
@@ -465,9 +555,20 @@ void MainWindow::updateMenus()
 
     bool hasSelection = (activeMdiChild() &&
                          activeMdiChild()->scene()->selectedItems().count()>0);
+    DrawView *activeView = activeMdiChild();
+    bool isElementWindow = activeView && activeView->windowTitle().contains(QLatin1String("[Element]"));
+    int shapeCount = 0;
+    if (activeView && activeView->scene()) {
+        foreach (QGraphicsItem *it, activeView->scene()->items()) {
+            if (qgraphicsitem_cast<AbstractShape*>(it) && !qgraphicsitem_cast<SizeHandleRect*>(it))
+                ++shapeCount;
+        }
+    }
+    bool canSaveAsElement = hasSelection || (isElementWindow && shapeCount > 0);
 
     cutAct->setEnabled(hasSelection);
     copyAct->setEnabled(hasSelection);
+    saveAsElementAct->setEnabled(canSaveAsElement);
 }
 
 void MainWindow::updateWindowMenu()
@@ -582,6 +683,8 @@ DrawView *MainWindow::createMdiChild()
 
     connect(scene,SIGNAL(itemControl(QGraphicsItem* , int , const QPointF&,const QPointF&)),
             this,SLOT(itemControl(QGraphicsItem*,int,QPointF,QPointF)));
+    connect(scene, SIGNAL(sceneClickedForElement(QString,QPointF)),
+            this, SLOT(onSceneClickedForElement(QString,QPointF)));
 
     DrawView *view = new DrawView(scene);
     scene->setView(view);
@@ -602,8 +705,175 @@ DrawView *MainWindow::createMdiChild()
 
     mdiArea->addSubWindow(view);
 
+    if (listViewElements->count() == 0)
+        loadElementLibrary();
+
     view->showMaximized();
     return view;
+}
+
+void MainWindow::onSceneClickedForElement(const QString &path, const QPointF &scenePos)
+{
+    DrawScene *sc = qobject_cast<DrawScene*>(sender());
+    if (!sc) return;
+    DrawView *view = qobject_cast<DrawView*>(sc->view());
+    if (!view) return;
+    if (view->loadElementAndInsertAt(path, scenePos)) {
+        view->unsetCursor(); // 恢复正常光标
+        statusBar()->showMessage(tr("[Element] Placed"), 2000);
+    } else {
+        statusBar()->showMessage(tr("Failed to load element: %1").arg(path));
+    }
+}
+
+void MainWindow::onCompoundListContextMenu(const QPoint &pos)
+{
+    QListWidgetItem *item = listViewElements->itemAt(pos);
+    if (item)
+        listViewElements->setCurrentItem(item);
+    QMenu menu(this);
+    menu.addAction(tr("New"), this, &MainWindow::onElementNew);
+    if (item) {
+        menu.addAction(tr("Edit"), this, &MainWindow::onElementEdit);
+        menu.addAction(tr("Delete"), this, &MainWindow::onElementDelete);
+    }
+    menu.exec(listViewElements->mapToGlobal(pos));
+}
+
+void MainWindow::onElementNew()
+{
+    m_editingElementPath.clear();
+    DrawView *view = createMdiChild();
+    view->setWindowTitle(tr("[Element] New"));
+    QMdiSubWindow *sub = 0;
+    foreach (QMdiSubWindow *w, mdiArea->subWindowList()) {
+        if (w->widget() == view) {
+            sub = w;
+            break;
+        }
+    }
+    if (sub) {
+        mdiArea->setActiveSubWindow(sub);
+        view->setFocus(Qt::MouseFocusReason);
+    }
+    statusBar()->showMessage(tr("[Element] New canvas: Draw or select shapes, then use Edit -> Save as element to add to library"));
+}
+
+void MainWindow::onElementEdit()
+{
+    QListWidgetItem *item = listViewElements->currentItem();
+    if (!item) return;
+    QString path = item->data(Qt::UserRole).toString();
+    if (path.isEmpty()) return;
+    DrawView *view = createMdiChild();
+    QString name = QFileInfo(path).baseName();
+    view->setWindowTitle(tr("[Element] Editing: %1").arg(name));
+    QPointF placePos(100, 100);
+    if (view->scene() && view->scene()->sceneRect().isValid())
+        placePos = view->scene()->sceneRect().center();
+    if (view->loadElementAndInsertAt(path, placePos)) {
+        m_editingElementPath = path;
+        QMdiSubWindow *sub = 0;
+        foreach (QMdiSubWindow *w, mdiArea->subWindowList()) {
+            if (w->widget() == view) {
+                sub = w;
+                break;
+            }
+        }
+        if (sub) {
+            mdiArea->setActiveSubWindow(sub);
+            view->setFocus(Qt::MouseFocusReason);
+        }
+        statusBar()->showMessage(tr("[Element] Edit canvas: Modify then use Edit -> Save as element (same name to overwrite)."));
+    } else {
+        statusBar()->showMessage(tr("Failed to load element for editing"));
+        view->close();
+    }
+}
+
+void MainWindow::onElementDelete()
+{
+    QListWidgetItem *item = listViewElements->currentItem();
+    if (!item) return;
+    QString path = item->data(Qt::UserRole).toString();
+    QString name = item->text();
+    if (path.isEmpty()) return;
+    int ret = QMessageBox::question(this, tr("Delete element"),
+                                    tr("Delete element \"%1\"? The file will be removed.").arg(name),
+                                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (ret != QMessageBox::Yes) return;
+    if (QFile::remove(path)) {
+        delete listViewElements->takeItem(listViewElements->row(item));
+        if (m_editingElementPath == path)
+            m_editingElementPath.clear();
+        statusBar()->showMessage(tr("Element deleted"), 2000);
+    } else {
+        statusBar()->showMessage(tr("Failed to delete file: %1").arg(path));
+    }
+}
+
+void MainWindow::saveSelectionAsElementTriggered()
+{
+    DrawView *view = activeMdiChild();
+    if (!view || !view->scene())
+        return;
+    QGraphicsScene *scene = view->scene();
+    QList<QGraphicsItem*> sel = scene->selectedItems();
+    bool isElementWindow = view->windowTitle().contains(QLatin1String("[Element]"));
+    if (sel.isEmpty() && isElementWindow) {
+        scene->clearSelection();
+        foreach (QGraphicsItem *it, scene->items()) {
+            if (qgraphicsitem_cast<AbstractShape*>(it) && !qgraphicsitem_cast<SizeHandleRect*>(it))
+                it->setSelected(true);
+        }
+        sel = scene->selectedItems();
+    }
+    if (sel.isEmpty()) {
+        statusBar()->showMessage(tr("Select one or more items first"));
+        return;
+    }
+    QString defaultName;
+    if (!m_editingElementPath.isEmpty())
+        defaultName = QFileInfo(m_editingElementPath).baseName();
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("Save as element"),
+                                         tr("Element name:"), QLineEdit::Normal,
+                                         defaultName, &ok);
+    if (!ok || name.trimmed().isEmpty())
+        return;
+    name = name.trimmed();
+    QString safeName = name;
+    safeName.replace(QLatin1Char('/'), QLatin1Char('_'));
+    safeName.replace(QLatin1Char('\\'), QLatin1Char('_'));
+    QDir elementDir(elementLibraryPath());
+    if (!elementDir.exists())
+        elementDir.mkpath(QLatin1String("."));
+    QString path = elementDir.absoluteFilePath(safeName + QLatin1String(".xml"));
+    if (view->saveSelectionAsElement(path, name)) {
+        m_editingElementPath.clear();
+        statusBar()->showMessage(tr("[Element] Saved to library"), 2000);
+        QPixmap icon = view->renderElementPreview(path, QSize(48, 48));
+        if (icon.isNull())
+            icon = QPixmap(48, 48);
+        QListWidgetItem *existing = 0;
+        for (int i = 0; i < listViewElements->count(); ++i) {
+            if (listViewElements->item(i)->data(Qt::UserRole).toString() == path) {
+                existing = listViewElements->item(i);
+                break;
+            }
+        }
+        if (existing) {
+            existing->setIcon(icon);
+            existing->setText(name);
+            existing->setData(Qt::UserRole, path);
+        } else {
+            QListWidgetItem *wi = new QListWidgetItem(icon, name);
+            wi->setData(Qt::UserRole, path);
+            listViewElements->addItem(wi);
+        }
+    } else {
+        statusBar()->showMessage(tr("Failed to save element"));
+    }
 }
 
 void MainWindow::addShape()
@@ -697,6 +967,16 @@ void MainWindow::updateActions()
 
     copyAct->setEnabled(scene && scene->selectedItems().count() > 0);
     cutAct->setEnabled(scene && scene->selectedItems().count() > 0);
+    DrawView *activeView = activeMdiChild();
+    bool isElementWindow = activeView && activeView->windowTitle().contains(QLatin1String("[Element]"));
+    int shapeCount = 0;
+    if (scene) {
+        foreach (QGraphicsItem *it, scene->items()) {
+            if (qgraphicsitem_cast<AbstractShape*>(it) && !qgraphicsitem_cast<SizeHandleRect*>(it))
+                ++shapeCount;
+        }
+    }
+    saveAsElementAct->setEnabled(scene && (scene->selectedItems().count() > 0 || (isElementWindow && shapeCount > 0)));
     pasteAct->setEnabled(scene && (dynamic_cast<const ShapeMimeData*>(QApplication::clipboard()->mimeData()) != 0));
 }
 

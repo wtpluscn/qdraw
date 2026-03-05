@@ -1,4 +1,5 @@
 #include "drawobj.h"
+#include <QColor>
 #include <QPainter>
 #include <QStyleOptionGraphicsItem>
 #include <QGraphicsItemGroup>
@@ -179,6 +180,18 @@ bool GraphicsItem::readBaseAttributes(QXmlStreamReader *xml)
     setZValue(xml->attributes().value(QLatin1String("z")).toDouble());
     setRotation(xml->attributes().value(QLatin1String("rotate")).toDouble());
     setPos(x,y);
+    QString penColor = xml->attributes().value(QLatin1String("penColor")).toString();
+    if (!penColor.isEmpty()) {
+        m_pen.setColor(QColor(penColor));
+    }
+    QString brushColor = xml->attributes().value(QLatin1String("brushColor")).toString();
+    if (!brushColor.isEmpty()) {
+        m_brush.setColor(QColor(brushColor));
+    }
+    qreal penWidth = xml->attributes().value(QLatin1String("penWidth")).toDouble();
+    if (penWidth > 0) {
+        m_pen.setWidthF(penWidth);
+    }
     return true;
 }
 
@@ -190,6 +203,9 @@ bool GraphicsItem::writeBaseAttributes(QXmlStreamWriter *xml)
     xml->writeAttribute(QLatin1String("z"),QString("%1").arg(zValue()));
     xml->writeAttribute(QLatin1String("width"),QString("%1").arg(m_width));
     xml->writeAttribute(QLatin1String("height"),QString("%1").arg(m_height));
+    xml->writeAttribute(QLatin1String("penColor"), m_pen.color().name());
+    xml->writeAttribute(QLatin1String("brushColor"), m_brush.color().name());
+    xml->writeAttribute(QLatin1String("penWidth"), QString("%1").arg(m_pen.widthF()));
     return true;
 }
 
