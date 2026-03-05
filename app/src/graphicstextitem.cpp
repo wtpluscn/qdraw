@@ -107,7 +107,13 @@ void GraphicsTextItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *
 
     painter->setPen(m_textColor);
     painter->setFont(m_font);
+    // View uses scale(1,-1) (origin at bottom-left), so flip text in item coords so it appears right-side up
+    painter->save();
+    painter->translate(m_localRect.center());
+    painter->scale(1, -1);
+    painter->translate(-m_localRect.center());
     painter->drawText(m_localRect, Qt::TextWordWrap | Qt::AlignCenter, m_text);
+    painter->restore();
 
     if (option->state & QStyle::State_Selected)
         qt_graphicsItem_highlightSelected(this, painter, option);

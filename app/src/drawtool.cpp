@@ -1,10 +1,13 @@
 #include "drawtool.h"
 #include "drawshapes.h"
+#include "texteditdialog.h"
 #include <QDebug>
 #include <QGraphicsSceneMouseEvent>
 #include <QGraphicsView>
 #include <QGraphicsLineItem>
 #include <QtMath>
+#include <QDialog>
+#include <QObject>
 #define PI 3.1416
 
 QList<DrawTool*> DrawTool::c_tools;
@@ -76,7 +79,8 @@ void DrawTool::mouseReleaseEvent(QGraphicsSceneMouseEvent *event, DrawScene *sce
 
 void DrawTool::mouseDoubleClickEvent(QGraphicsSceneMouseEvent *event, DrawScene *scene)
 {
-
+    Q_UNUSED(event);
+    Q_UNUSED(scene);
 }
 
 DrawTool *DrawTool::findTool(DrawShape drawShape)
@@ -282,6 +286,32 @@ void SelectTool::mouseReleaseEvent(QGraphicsSceneMouseEvent *event, DrawScene *s
     scene->mouseEvent(event);
 }
 
+void SelectTool::mouseDoubleClickEvent(QGraphicsSceneMouseEvent *event, DrawScene *scene)
+{
+    if (event->button() != Qt::LeftButton) {
+        DrawTool::mouseDoubleClickEvent(event, scene);
+        return;
+    }
+    QTransform t;
+    if (!scene->views().isEmpty())
+        t = scene->views().first()->transform();
+    QGraphicsItem *g = scene->itemAt(event->scenePos(), t);
+    GraphicsTextItem *textItem = qgraphicsitem_cast<GraphicsTextItem *>(g);
+    if (!textItem) {
+        DrawTool::mouseDoubleClickEvent(event, scene);
+        return;
+    }
+    TextEditDialog dlg(scene->view());
+    dlg.setText(textItem->text());
+    dlg.setFont(textItem->font());
+    dlg.setTextColor(textItem->textColor());
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    textItem->setText(dlg.text().isEmpty() ? QObject::tr("Text") : dlg.text());
+    textItem->setFont(dlg.font());
+    textItem->setTextColor(dlg.textColor());
+}
+
 RotationTool::RotationTool()
     :DrawTool(rotation)
 {
@@ -438,6 +468,31 @@ void RectTool::mousePressEvent(QGraphicsSceneMouseEvent *event, DrawScene *scene
 
     scene->clearSelection();
     DrawTool::mousePressEvent(event,scene);
+
+    if ( c_drawShape == text ){
+        TextEditDialog dlg(scene->view());
+        dlg.setText(QObject::tr("Text"));
+        QFont defaultFont;
+        if (defaultFont.pointSize() <= 0)
+            defaultFont.setPointSize(12);
+        dlg.setFont(defaultFont);
+        dlg.setTextColor(Qt::black);
+        if (dlg.exec() != QDialog::Accepted)
+            return;
+        item = new GraphicsTextItem(QRect(0,0,80,24));
+        GraphicsTextItem *textItem = static_cast<GraphicsTextItem*>(item);
+        textItem->setText(dlg.text().isEmpty() ? QObject::tr("Text") : dlg.text());
+        textItem->setFont(dlg.font());
+        textItem->setTextColor(dlg.textColor());
+        c_down += QPoint(2,2);
+        item->setPos(event->scenePos());
+        scene->addItem(item);
+        item->setSelected(true);
+        selectMode = none;
+        nDragHandle = Handle_None;
+        return;
+    }
+
     switch ( c_drawShape ){
     case rectangle:
         item = new GraphicsRectItem(QRect(1,1,1,1));
@@ -451,8 +506,7 @@ void RectTool::mousePressEvent(QGraphicsSceneMouseEvent *event, DrawScene *scene
     case arc:
         item = new GraphicsArcItem(QRect(1,1,1,1));
         break;
-    case text:
-        item = new GraphicsTextItem(QRect(0,0,80,24));
+    default:
         break;
     }
     if ( item == 0) return;
@@ -477,7 +531,9 @@ void RectTool::mouseReleaseEvent(QGraphicsSceneMouseEvent *event, DrawScene *sce
 {
     selectTool.mouseReleaseEvent(event,scene);
 
-    if ( event->scenePos() == (c_down-QPoint(2,2))){
+    // For rectangle / ellipse / arc we treat a pure click (no drag) as cancel,
+    // but for text we want a default-sized text box even on a single click.
+    if ( event->scenePos() == (c_down-QPoint(2,2)) && m_drawShape != text){
 
        if ( item != 0){
          item->setSelected(false);

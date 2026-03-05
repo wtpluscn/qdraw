@@ -61,7 +61,8 @@ public:
     SelectTool();
     virtual void mousePressEvent(QGraphicsSceneMouseEvent * event , DrawScene * scene ) ;
     virtual void mouseMoveEvent(QGraphicsSceneMouseEvent * event , DrawScene * scene ) ;
-    virtual void mouseReleaseEvent(QGraphicsSceneMouseEvent * event , DrawScene * scene );
+    virtual void mouseReleaseEvent(QGraphicsSceneMouseEvent * event , DrawScene * scene ) ;
+    virtual void mouseDoubleClickEvent(QGraphicsSceneMouseEvent * event, DrawScene * scene );
     QPointF initialPositions;
     QPointF opposite_;
     QGraphicsPathItem * dashRect;

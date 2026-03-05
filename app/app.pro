@@ -32,6 +32,7 @@ SOURCES += src/main.cpp \
     src/customproperty.cpp \
     src/rulebar.cpp \
     src/drawview.cpp \
+    src/texteditdialog.cpp \
     src/commands.cpp \
     src/document.cpp
 
@@ -53,6 +54,7 @@ HEADERS  += include/mainwindow.h \
     include/customproperty.h \
     include/rulebar.h \
     include/drawview.h \
+    include/texteditdialog.h \
     include/commands.h \
     include/document.h
 
